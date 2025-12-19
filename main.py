@@ -100,9 +100,14 @@ class PhotoCardCropperApp:
         self.preview_update_job = None  # 디바운싱용
         self.preview_cropper = None
         
+        # 이미지별 오프셋 저장 {이미지경로: (offset_x, offset_y)}
+        self.image_offsets: dict = {}
+        
         # tkinter 변수
         self.zoom_var = tk.DoubleVar(value=2.8)
         self.eye_var = tk.DoubleVar(value=0.42)
+        self.offset_x_var = tk.DoubleVar(value=0.0)  # 좌우 오프셋 (-0.3 ~ 0.3)
+        self.offset_y_var = tk.DoubleVar(value=0.0)  # 상하 오프셋 (-0.3 ~ 0.3)
         self.progress_var = tk.DoubleVar(value=0)
         self.width_var = tk.StringVar(value="55")
         self.height_var = tk.StringVar(value="85")
@@ -382,6 +387,104 @@ class PhotoCardCropperApp:
             text="← 눈이 위쪽 (이마 적음)  │  눈이 아래쪽 (이마 많음) →",
             style='Hint.TLabel'
         ).pack(fill='x', pady=(5, 0))
+        
+        # ========== 위치 조정 섹션 ==========
+        ttk.Separator(section_frame, orient='horizontal').pack(fill='x', pady=15)
+        
+        offset_header_frame = ttk.Frame(section_frame)
+        offset_header_frame.pack(fill='x', pady=(0, 10))
+        
+        ttk.Label(
+            offset_header_frame,
+            text="📍 위치 미세 조정 (이미지별)",
+            font=('SF Pro Display', 12, 'bold')
+        ).pack(side='left')
+        
+        self.reset_offset_btn = ttk.Button(
+            offset_header_frame,
+            text="초기화",
+            command=self._reset_current_image_offset,
+            width=8
+        )
+        self.reset_offset_btn.pack(side='right')
+        
+        # 조정된 이미지 수 표시
+        self.offset_count_label = ttk.Label(
+            section_frame,
+            text="조정된 이미지: 0개",
+            style='Hint.TLabel'
+        )
+        self.offset_count_label.pack(anchor='w', pady=(0, 5))
+        
+        # 좌우 오프셋 슬라이더
+        offset_x_frame = ttk.Frame(section_frame)
+        offset_x_frame.pack(fill='x', pady=(0, 10))
+        
+        offset_x_label_frame = ttk.Frame(offset_x_frame)
+        offset_x_label_frame.pack(fill='x')
+        
+        ttk.Label(
+            offset_x_label_frame,
+            text="좌우 이동"
+        ).pack(side='left')
+        
+        self.offset_x_value_label = ttk.Label(
+            offset_x_label_frame,
+            text="0",
+            style='Value.TLabel'
+        )
+        self.offset_x_value_label.pack(side='right')
+        
+        self.offset_x_slider = ttk.Scale(
+            offset_x_frame,
+            from_=-0.3,
+            to=0.3,
+            variable=self.offset_x_var,
+            orient='horizontal',
+            command=self._on_offset_x_change
+        )
+        self.offset_x_slider.pack(fill='x', pady=(5, 0))
+        
+        ttk.Label(
+            offset_x_frame,
+            text="← 왼쪽 이동  │  오른쪽 이동 →",
+            style='Hint.TLabel'
+        ).pack(fill='x', pady=(3, 0))
+        
+        # 상하 오프셋 슬라이더
+        offset_y_frame = ttk.Frame(section_frame)
+        offset_y_frame.pack(fill='x')
+        
+        offset_y_label_frame = ttk.Frame(offset_y_frame)
+        offset_y_label_frame.pack(fill='x')
+        
+        ttk.Label(
+            offset_y_label_frame,
+            text="상하 이동"
+        ).pack(side='left')
+        
+        self.offset_y_value_label = ttk.Label(
+            offset_y_label_frame,
+            text="0",
+            style='Value.TLabel'
+        )
+        self.offset_y_value_label.pack(side='right')
+        
+        self.offset_y_slider = ttk.Scale(
+            offset_y_frame,
+            from_=-0.3,
+            to=0.3,
+            variable=self.offset_y_var,
+            orient='horizontal',
+            command=self._on_offset_y_change
+        )
+        self.offset_y_slider.pack(fill='x', pady=(5, 0))
+        
+        ttk.Label(
+            offset_y_frame,
+            text="← 위로 이동  │  아래로 이동 →",
+            style='Hint.TLabel'
+        ).pack(fill='x', pady=(3, 0))
     
     def _create_action_section(self, parent):
         """실행 버튼 섹션"""
@@ -597,6 +700,72 @@ class PhotoCardCropperApp:
         # 미리보기 업데이트 (디바운싱)
         self._schedule_preview_update()
     
+    def _on_offset_x_change(self, value):
+        """좌우 오프셋 슬라이더 변경"""
+        val = float(value)
+        # 퍼센트로 표시
+        percent = int(val * 100)
+        self.offset_x_value_label.configure(text=f"{percent:+d}%")
+        # 현재 이미지에 오프셋 저장
+        self._save_current_image_offset()
+        # 미리보기 업데이트 (디바운싱)
+        self._schedule_preview_update()
+    
+    def _on_offset_y_change(self, value):
+        """상하 오프셋 슬라이더 변경"""
+        val = float(value)
+        # 퍼센트로 표시
+        percent = int(val * 100)
+        self.offset_y_value_label.configure(text=f"{percent:+d}%")
+        # 현재 이미지에 오프셋 저장
+        self._save_current_image_offset()
+        # 미리보기 업데이트 (디바운싱)
+        self._schedule_preview_update()
+    
+    def _save_current_image_offset(self):
+        """현재 이미지의 오프셋 값 저장"""
+        if self.preview_images and 0 <= self.preview_index < len(self.preview_images):
+            image_path = self.preview_images[self.preview_index]
+            offset_x = self.offset_x_var.get()
+            offset_y = self.offset_y_var.get()
+            self.image_offsets[image_path] = (offset_x, offset_y)
+            # 조정된 이미지 수 업데이트
+            self._update_offset_count()
+    
+    def _load_image_offset(self, image_path: str):
+        """이미지의 저장된 오프셋 값 불러오기"""
+        if image_path in self.image_offsets:
+            offset_x, offset_y = self.image_offsets[image_path]
+        else:
+            # 저장된 값이 없으면 기본값 (0, 0) 사용
+            offset_x, offset_y = 0.0, 0.0
+        
+        # 슬라이더 업데이트 (이벤트 방지를 위해 trace 없이)
+        self.offset_x_var.set(offset_x)
+        self.offset_y_var.set(offset_y)
+        
+        # 라벨 업데이트
+        self.offset_x_value_label.configure(text=f"{int(offset_x * 100):+d}%")
+        self.offset_y_value_label.configure(text=f"{int(offset_y * 100):+d}%")
+    
+    def _reset_current_image_offset(self):
+        """현재 이미지의 오프셋 초기화"""
+        self.offset_x_var.set(0.0)
+        self.offset_y_var.set(0.0)
+        self.offset_x_value_label.configure(text="+0%")
+        self.offset_y_value_label.configure(text="+0%")
+        self._save_current_image_offset()
+        self._schedule_preview_update()
+    
+    def _update_offset_count(self):
+        """조정된 이미지 수 업데이트"""
+        # 0이 아닌 오프셋을 가진 이미지 수 계산
+        adjusted_count = sum(
+            1 for ox, oy in self.image_offsets.values() 
+            if ox != 0 or oy != 0
+        )
+        self.offset_count_label.configure(text=f"조정된 이미지: {adjusted_count}개")
+    
     def _clear_log(self):
         """로그 지우기"""
         self.log_text.delete('1.0', END)
@@ -692,6 +861,9 @@ class PhotoCardCropperApp:
         image_path = self.preview_images[self.preview_index]
         filename = os.path.basename(image_path)
         
+        # 해당 이미지의 저장된 오프셋 불러오기
+        self._load_image_offset(image_path)
+        
         # 상대 경로 계산 (원본 폴더 기준)
         if self.input_dir:
             rel_path = os.path.relpath(image_path, self.input_dir)
@@ -705,15 +877,22 @@ class PhotoCardCropperApp:
             if self.preview_original_image is None:
                 raise ValueError("이미지를 읽을 수 없습니다")
             
-            # 정보 표시 (폴더 경로 포함)
+            # 정보 표시 (폴더 경로 포함 + 개별 오프셋 상태)
             h, w = self.preview_original_image.shape[:2]
             if rel_folder:
                 display_name = f"📁 {rel_folder}/\n📄 {filename}"
             else:
                 display_name = f"📄 {filename}"
             
+            # 개별 오프셋 설정 여부 표시
+            offset_indicator = ""
+            if image_path in self.image_offsets:
+                ox, oy = self.image_offsets[image_path]
+                if ox != 0 or oy != 0:
+                    offset_indicator = " 📍"
+            
             self.preview_info_label.configure(
-                text=f"{display_name}\n({w}×{h}px) - {self.preview_index + 1}/{len(self.preview_images)}"
+                text=f"{display_name}\n({w}×{h}px) - {self.preview_index + 1}/{len(self.preview_images)}{offset_indicator}"
             )
             
             # 미리보기 업데이트
@@ -777,11 +956,17 @@ class PhotoCardCropperApp:
             self.preview_cropper.default_output_height = preview_height
             self.preview_cropper.aspect_ratio = aspect_ratio
             
+            # 오프셋 값 가져오기
+            offset_x = self.offset_x_var.get()
+            offset_y = self.offset_y_var.get()
+            
             # 크롭 실행
             result = self.preview_cropper.process_image_from_array(
                 self.preview_original_image,
                 zoom_factor=zoom,
-                eye_position=eye_pos
+                eye_position=eye_pos,
+                offset_x=offset_x,
+                offset_y=offset_y
             )
             
             if result is not None:
@@ -911,19 +1096,31 @@ class PhotoCardCropperApp:
         # 파라미터
         zoom_factor = self.zoom_var.get()
         eye_position = self.eye_var.get()
+        offset_x = self.offset_x_var.get()
+        offset_y = self.offset_y_var.get()
         
-        self._append_log(f"🚀 변환 시작 - 규격: {width_mm}×{height_mm}mm, zoom: {zoom_factor:.2f}, eye: {eye_position:.2f}")
+        offset_info = ""
+        if offset_x != 0 or offset_y != 0:
+            offset_info = f", 오프셋: ({int(offset_x*100):+d}%, {int(offset_y*100):+d}%)"
+        
+        self._append_log(f"🚀 변환 시작 - 규격: {width_mm}×{height_mm}mm, zoom: {zoom_factor:.2f}, eye: {eye_position:.2f}{offset_info}")
+        
+        # 이미지별 오프셋 복사 (스레드 안전)
+        image_offsets_copy = dict(self.image_offsets)
         
         # 별도 스레드에서 처리
         self.processing_thread = threading.Thread(
             target=self._process_images,
-            args=(zoom_factor, eye_position, width_mm, height_mm),
+            args=(zoom_factor, eye_position, width_mm, height_mm, offset_x, offset_y, image_offsets_copy),
             daemon=True
         )
         self.processing_thread.start()
     
-    def _process_images(self, zoom_factor: float, eye_position: float, width_mm: float, height_mm: float):
+    def _process_images(self, zoom_factor: float, eye_position: float, width_mm: float, height_mm: float, offset_x: float = 0.0, offset_y: float = 0.0, image_offsets: dict = None):
         """이미지 처리 (별도 스레드)"""
+        if image_offsets is None:
+            image_offsets = {}
+        
         try:
             # 크로퍼 초기화 (사용자 정의 규격 + 원본 해상도/DPI 유지)
             cropper = self.PhotoCardCropper(
@@ -933,7 +1130,9 @@ class PhotoCardCropperApp:
                 height_mm=height_mm,
                 padding_mode='white',
                 fallback_on_no_face=True,
-                preserve_resolution=True  # 원본 해상도 유지
+                preserve_resolution=True,  # 원본 해상도 유지
+                offset_x=offset_x,
+                offset_y=offset_y
             )
             
             # 파일 핸들러 초기화 (DPI 보존)
@@ -955,8 +1154,13 @@ class PhotoCardCropperApp:
                 self.root.after(0, self._processing_complete)
                 return
             
+            # 개별 오프셋이 설정된 이미지 수
+            adjusted_count = sum(1 for img in images if str(img) in image_offsets and image_offsets[str(img)] != (0.0, 0.0))
+            
             self.root.after(0, lambda: self._append_log(f"📷 총 {total}개 이미지 발견"))
             self.root.after(0, lambda w=width_mm, h=height_mm: self._append_log(f"📐 출력 규격: {w}×{h}mm (원본 DPI 유지)"))
+            if adjusted_count > 0:
+                self.root.after(0, lambda c=adjusted_count: self._append_log(f"📍 개별 위치 조정: {c}개 이미지"))
             
             # 처리 루프
             success_count = 0
@@ -964,8 +1168,19 @@ class PhotoCardCropperApp:
             
             for idx, image_path in enumerate(images, 1):
                 try:
-                    # 이미지 처리 (메타데이터 포함)
-                    result = cropper.process_image(str(image_path))
+                    # 이미지별 오프셋 확인
+                    img_path_str = str(image_path)
+                    if img_path_str in image_offsets:
+                        img_offset_x, img_offset_y = image_offsets[img_path_str]
+                    else:
+                        img_offset_x, img_offset_y = offset_x, offset_y
+                    
+                    # 이미지 처리 (메타데이터 포함, 개별 오프셋 적용)
+                    result = cropper.process_image(
+                        str(image_path),
+                        offset_x=img_offset_x,
+                        offset_y=img_offset_y
+                    )
                     
                     if result is not None:
                         image_data, metadata = result
@@ -1029,6 +1244,8 @@ class PhotoCardCropperApp:
         self.output_btn.configure(state=state)
         self.zoom_slider.configure(state=state)
         self.eye_slider.configure(state=state)
+        self.offset_x_slider.configure(state=state)
+        self.offset_y_slider.configure(state=state)
         self.start_btn.configure(state=state)
         
         if enabled:
@@ -1071,6 +1288,8 @@ def run_cli():
     parser.add_argument('--height', '-H', type=float, default=85, help='출력 규격 세로 mm (기본값: 85)')
     parser.add_argument('--zoom', '-z', type=float, default=2.8, help='Zoom factor (기본값: 2.8)')
     parser.add_argument('--eye-position', '-e', type=float, default=0.42, help='Eye position (기본값: 0.42)')
+    parser.add_argument('--offset-x', type=float, default=0.0, help='좌우 오프셋 -0.3~0.3 (기본값: 0.0)')
+    parser.add_argument('--offset-y', type=float, default=0.0, help='상하 오프셋 -0.3~0.3 (기본값: 0.0)')
     parser.add_argument('--format', '-f', type=str, choices=['jpg', 'png', 'webp', 'tiff'], default='jpg')
     parser.add_argument('--quality', '-q', type=int, default=100, help='출력 품질 (기본값: 100)')
     
@@ -1095,7 +1314,9 @@ def run_cli():
         eye_position=args.eye_position,
         width_mm=args.width,
         height_mm=args.height,
-        preserve_resolution=True  # 원본 해상도 유지
+        preserve_resolution=True,  # 원본 해상도 유지
+        offset_x=args.offset_x,
+        offset_y=args.offset_y
     )
     
     if args.input:
