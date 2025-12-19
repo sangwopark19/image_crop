@@ -159,7 +159,9 @@ class PhotoCardCropper:
         padding_mode: str = 'white',
         fallback_on_no_face: bool = True,
         preserve_resolution: bool = True,
-        min_output_height: int = 850
+        min_output_height: int = 850,
+        offset_x: float = 0.0,
+        offset_y: float = 0.0
     ):
         """
         PhotoCardCropper 초기화
@@ -173,6 +175,8 @@ class PhotoCardCropper:
             fallback_on_no_face: 얼굴 미감지 시 원본 중앙 크롭 사용 여부
             preserve_resolution: True면 원본 해상도 유지
             min_output_height: 최소 출력 높이 (픽셀)
+            offset_x: 좌우 오프셋 비율 (-0.5 ~ 0.5, 음수: 왼쪽, 양수: 오른쪽)
+            offset_y: 상하 오프셋 비율 (-0.5 ~ 0.5, 음수: 위, 양수: 아래)
         """
         self.zoom_factor = zoom_factor
         self.eye_position = eye_position
@@ -182,6 +186,8 @@ class PhotoCardCropper:
         self.fallback_on_no_face = fallback_on_no_face
         self.preserve_resolution = preserve_resolution
         self.min_output_height = min_output_height
+        self.offset_x = offset_x
+        self.offset_y = offset_y
         
         # 비율 계산
         self.aspect_ratio = width_mm / height_mm
@@ -221,10 +227,16 @@ class PhotoCardCropper:
         self,
         image: np.ndarray,
         face_bbox: Tuple[int, int, int, int],
-        eye_center: Tuple[int, int]
+        eye_center: Tuple[int, int],
+        offset_x: Optional[float] = None,
+        offset_y: Optional[float] = None
     ) -> Tuple[int, int, int, int]:
         face_x, face_y, face_w, face_h = face_bbox
         eye_center_x, eye_center_y = eye_center
+        
+        # 오프셋 값 결정
+        off_x = offset_x if offset_x is not None else self.offset_x
+        off_y = offset_y if offset_y is not None else self.offset_y
         
         # 얼굴 크기를 기준으로 크롭 영역 크기 계산
         crop_height = int(face_h * self.zoom_factor)
@@ -233,6 +245,12 @@ class PhotoCardCropper:
         # 눈의 위치가 eye_position 비율에 오도록 y 좌표 계산
         crop_y = eye_center_y - int(crop_height * self.eye_position)
         crop_x = eye_center_x - crop_width // 2
+        
+        # 사용자 오프셋 적용 (비율 기반)
+        # offset_x: 양수면 오른쪽으로 이동 (이미지가 왼쪽으로 이동하는 효과)
+        # offset_y: 양수면 아래로 이동 (이미지가 위로 이동하는 효과)
+        crop_x += int(crop_width * off_x)
+        crop_y += int(crop_height * off_y)
         
         return crop_x, crop_y, crop_width, crop_height
     
@@ -349,7 +367,9 @@ class PhotoCardCropper:
         zoom_factor: Optional[float] = None,
         eye_position: Optional[float] = None,
         width_mm: Optional[float] = None,
-        height_mm: Optional[float] = None
+        height_mm: Optional[float] = None,
+        offset_x: Optional[float] = None,
+        offset_y: Optional[float] = None
     ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
         """
         이미지 처리 메인 함수
@@ -360,6 +380,8 @@ class PhotoCardCropper:
             eye_position: 눈 위치 비율
             width_mm: 출력 규격 가로 (mm)
             height_mm: 출력 규격 세로 (mm)
+            offset_x: 좌우 오프셋 비율 (-0.5 ~ 0.5)
+            offset_y: 상하 오프셋 비율 (-0.5 ~ 0.5)
             
         Returns:
             (처리된 이미지, 메타데이터) 튜플 또는 실패 시 None
@@ -367,6 +389,8 @@ class PhotoCardCropper:
         # 파라미터 오버라이드
         zoom = zoom_factor if zoom_factor is not None else self.zoom_factor
         eye_pos = eye_position if eye_position is not None else self.eye_position
+        off_x = offset_x if offset_x is not None else self.offset_x
+        off_y = offset_y if offset_y is not None else self.offset_y
         
         # 규격 오버라이드
         if width_mm is not None and height_mm is not None:
@@ -377,8 +401,12 @@ class PhotoCardCropper:
         
         original_zoom = self.zoom_factor
         original_eye_pos = self.eye_position
+        original_offset_x = self.offset_x
+        original_offset_y = self.offset_y
         self.zoom_factor = zoom
         self.eye_position = eye_pos
+        self.offset_x = off_x
+        self.offset_y = off_y
         
         try:
             image, metadata = self._load_image_with_metadata(image_path)
@@ -443,6 +471,8 @@ class PhotoCardCropper:
         finally:
             self.zoom_factor = original_zoom
             self.eye_position = original_eye_pos
+            self.offset_x = original_offset_x
+            self.offset_y = original_offset_y
             if original_aspect is not None:
                 self.aspect_ratio = original_aspect
     
@@ -451,19 +481,27 @@ class PhotoCardCropper:
         image: np.ndarray,
         zoom_factor: Optional[float] = None,
         eye_position: Optional[float] = None,
+        offset_x: Optional[float] = None,
+        offset_y: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
         """numpy 배열로부터 직접 이미지 처리"""
         zoom = zoom_factor if zoom_factor is not None else self.zoom_factor
         eye_pos = eye_position if eye_position is not None else self.eye_position
+        off_x = offset_x if offset_x is not None else self.offset_x
+        off_y = offset_y if offset_y is not None else self.offset_y
         
         if metadata is None:
             metadata = {'dpi': (72, 72), 'exif': None, 'icc_profile': None}
         
         original_zoom = self.zoom_factor
         original_eye_pos = self.eye_position
+        original_offset_x = self.offset_x
+        original_offset_y = self.offset_y
         self.zoom_factor = zoom
         self.eye_position = eye_pos
+        self.offset_x = off_x
+        self.offset_y = off_y
         
         try:
             if image is None or image.size == 0:
@@ -509,3 +547,5 @@ class PhotoCardCropper:
         finally:
             self.zoom_factor = original_zoom
             self.eye_position = original_eye_pos
+            self.offset_x = original_offset_x
+            self.offset_y = original_offset_y
